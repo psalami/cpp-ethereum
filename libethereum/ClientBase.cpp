@@ -50,6 +50,8 @@ void ClientBase::submitTransaction(Secret _secret, u256 _value, Address _dest, b
 	
 	StructuredLogger::transactionReceived(t.sha3().abridged(), t.sender().abridged());
 	cnote << "New transaction " << t;
+	cnote << "nonce: " << n;
+	cnote << "rlp: " << toHex(t.rlp());
 }
 
 Address ClientBase::submitTransaction(Secret _secret, u256 _endowment, bytes const& _init, u256 _gas, u256 _gasPrice)
@@ -62,6 +64,7 @@ Address ClientBase::submitTransaction(Secret _secret, u256 _endowment, bytes con
 
 	StructuredLogger::transactionReceived(t.sha3().abridged(), t.sender().abridged());
 	cnote << "New transaction " << t;
+
 	
 	return right160(sha3(rlpList(t.sender(), t.nonce())));
 }

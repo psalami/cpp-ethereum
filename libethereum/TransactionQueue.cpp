@@ -37,7 +37,11 @@ ImportResult TransactionQueue::import(bytesConstRef _transactionRLP, ImportCallb
 	// TODO: keep old transactions around and check in State for nonce validity
 
 	if (m_known.count(h))
+	{
+		cnote << "tx already known";
 		return ImportResult::AlreadyKnown;
+	}
+	
 
 	try
 	{
@@ -45,13 +49,17 @@ ImportResult TransactionQueue::import(bytesConstRef _transactionRLP, ImportCallb
 		// If it doesn't work, the signature is bad.
 		// The transaction's nonce may yet be invalid (or, it could be "valid" but we may be missing a marginally older transaction).
 		Transaction t(_transactionRLP, CheckTransaction::Everything);
-
+		cnote << "deserialized tx";
 		UpgradeGuard ul(l);
 		// If valid, append to blocks.
 		m_current[h] = t;
 		m_known.insert(h);
-		if (_cb)
+		cnote << "inserted tx";
+		if (_cb){
+			cnote << "adding callback";
 			m_callbacks[h] = _cb;
+		}
+		cnote << "queueing";
 		ctxq << "Queued vaguely legit-looking transaction" << h.abridged();
 		m_onReady();
 	}
@@ -65,7 +73,7 @@ ImportResult TransactionQueue::import(bytesConstRef _transactionRLP, ImportCallb
 		ctxq << "Ignoring invalid transaction: " << _e.what();
 		return ImportResult::Malformed;
 	}
-
+	cnote << "successfully imported tx";
 	return ImportResult::Success;
 }
 

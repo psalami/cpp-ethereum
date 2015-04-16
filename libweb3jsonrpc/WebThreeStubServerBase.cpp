@@ -484,6 +484,19 @@ string WebThreeStubServerBase::eth_sendTransaction(Json::Value const& _json)
 	}
 }
 
+string WebThreeStubServerBase::eth_sendRawTransaction(std::string const& _rawTx)
+{
+	try
+	{
+		client()->submitRawTransaction(fromHex(_rawTx));
+		return "";
+	}
+	catch (...)
+	{
+		BOOST_THROW_EXCEPTION(JsonRpcException(Errors::ERROR_RPC_INVALID_PARAMS));
+	}
+}
+
 
 string WebThreeStubServerBase::eth_call(Json::Value const& _json, string const& _blockNumber)
 {

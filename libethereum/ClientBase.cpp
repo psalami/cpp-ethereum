@@ -64,6 +64,12 @@ Address ClientBase::submitTransaction(Secret _secret, u256 _endowment, bytes con
 	return right160(sha3(rlpList(t.sender(), t.nonce())));
 }
 
+void ClientBase::submitRawTransaction(bytes const& _txRlp){
+	prepareForTransaction();
+	m_tq.import(_txRlp);
+	cnote << "New raw transaction";
+}
+
 // TODO: remove try/catch, allow exceptions
 ExecutionResult ClientBase::call(Secret _secret, u256 _value, Address _dest, bytes const& _data, u256 _gas, u256 _gasPrice, BlockNumber _blockNumber, FudgeFactor _ff)
 {

@@ -72,6 +72,8 @@ public:
 	/// Submits a new contract-creation transaction.
 	/// @returns the new contract's address (assuming it all goes through).
 	virtual Address submitTransaction(Secret _secret, u256 _endowment, bytes const& _init, u256 _gas = 10000, u256 _gasPrice = 10 * szabo) = 0;
+	
+	virtual void submitRawTransaction(bytes const& _txRlp) = 0;
 
 	/// Blocks until all pending transactions have been processed.
 	virtual void flushTransactions() = 0;

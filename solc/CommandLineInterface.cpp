@@ -27,6 +27,7 @@
 #include <fstream>
 
 #include <boost/filesystem.hpp>
+#include <boost/algorithm/string.hpp>
 
 #include "BuildInfo.h"
 #include <libdevcore/Common.h>
@@ -55,6 +56,7 @@ namespace solidity
 static string const g_argAbiStr         = "json-abi";
 static string const g_argSolAbiStr      = "sol-abi";
 static string const g_argAsmStr         = "asm";
+static string const g_argAsmJsonStr     = "asm-json";
 static string const g_argAstStr         = "ast";
 static string const g_argAstJson        = "ast-json";
 static string const g_argBinaryStr      = "binary";
@@ -62,6 +64,18 @@ static string const g_argOpcodesStr     = "opcodes";
 static string const g_argNatspecDevStr  = "natspec-dev";
 static string const g_argNatspecUserStr = "natspec-user";
 static string const g_argAddStandard    = "add-std";
+
+/// Possible arguments to for --combined-json
+static set<string> const g_combinedJsonArgs{
+	"binary",
+	"opcodes",
+	"json-abi",
+	"sol-abi",
+	"asm",
+	"ast",
+	"natspec-user",
+	"natspec-dev"
+};
 
 static void version()
 {
@@ -71,19 +85,24 @@ static void version()
 	exit(0);
 }
 
-static inline bool argToStdout(po::variables_map const& _args, string const& _name)
+static inline bool humanTargetedStdout(po::variables_map const& _args, string const& _name)
 {
 	return _args.count(_name) && _args[_name].as<OutputType>() != OutputType::FILE;
 }
 
-static bool needStdout(po::variables_map const& _args)
+static bool needsHumanTargetedStdout(po::variables_map const& _args)
 {
 
 	return
-		argToStdout(_args, g_argAbiStr) || argToStdout(_args, g_argSolAbiStr) ||
-		argToStdout(_args, g_argNatspecUserStr) || argToStdout(_args, g_argAstJson) ||
-		argToStdout(_args, g_argNatspecDevStr) || argToStdout(_args, g_argAsmStr) ||
-		argToStdout(_args, g_argOpcodesStr) || argToStdout(_args, g_argBinaryStr);
+		humanTargetedStdout(_args, g_argAbiStr) ||
+		humanTargetedStdout(_args, g_argSolAbiStr) ||
+		humanTargetedStdout(_args, g_argNatspecUserStr) ||
+		humanTargetedStdout(_args, g_argAstJson) ||
+		humanTargetedStdout(_args, g_argNatspecDevStr) ||
+		humanTargetedStdout(_args, g_argAsmStr) ||
+		humanTargetedStdout(_args, g_argAsmJsonStr) ||
+		humanTargetedStdout(_args, g_argOpcodesStr) ||
+		humanTargetedStdout(_args, g_argBinaryStr);
 }
 
 static inline bool outputToFile(OutputType type)
@@ -214,24 +233,31 @@ bool CommandLineInterface::parseArguments(int argc, char** argv)
 		("optimize", po::value<bool>()->default_value(false), "Optimize bytecode for size")
 		("add-std", po::value<bool>()->default_value(false), "Add standard contracts")
 		("input-file", po::value<vector<string>>(), "input file")
+		(
+			"combined-json",
+			po::value<string>()->value_name(boost::join(g_combinedJsonArgs, ",")),
+			"Output a single json document containing the specified information, can be combined."
+		)
 		(g_argAstStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the AST of the contract.")
+			"Request to output the AST of the contract.")
 		(g_argAstJson.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the AST of the contract in JSON format.")
+			"Request to output the AST of the contract in JSON format.")
 		(g_argAsmStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the EVM assembly of the contract.")
+			"Request to output the EVM assembly of the contract.")
+		(g_argAsmJsonStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
+			"Request to output the EVM assembly of the contract in JSON format.")
 		(g_argOpcodesStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the Opcodes of the contract.")
+			"Request to output the Opcodes of the contract.")
 		(g_argBinaryStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the contract in binary (hexadecimal).")
+			"Request to output the contract in binary (hexadecimal).")
 		(g_argAbiStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the contract's JSON ABI interface.")
+			"Request to output the contract's JSON ABI interface.")
 		(g_argSolAbiStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the contract's Solidity ABI interface.")
+			"Request to output the contract's Solidity ABI interface.")
 		(g_argNatspecUserStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the contract's Natspec user documentation.")
+			"Request to output the contract's Natspec user documentation.")
 		(g_argNatspecDevStr.c_str(), po::value<OutputType>()->value_name("stdout|file|both"),
-		 "Request to output the contract's Natspec developer documentation.");
+			"Request to output the contract's Natspec developer documentation.");
 
 	// All positional options should be interpreted as input files
 	po::positional_options_description p;
@@ -244,8 +270,18 @@ bool CommandLineInterface::parseArguments(int argc, char** argv)
 	}
 	catch (po::error const& _exception)
 	{
-		cout << _exception.what() << endl;
+		cerr << _exception.what() << endl;
 		return false;
+	}
+	if (m_args.count("combined-json"))
+	{
+		vector<string> requests;
+		for (string const& item: boost::split(requests, m_args["combined-json"].as<string>(), boost::is_any_of(",")))
+			if (!g_combinedJsonArgs.count(item))
+			{
+				cerr << "Invalid option to --combined-json: " << item << endl;
+				return false;
+			}
 	}
 	po::notify(m_args);
 
@@ -281,13 +317,13 @@ bool CommandLineInterface::processInput()
 			auto path = boost::filesystem::path(infile);
 			if (!boost::filesystem::exists(path))
 			{
-				cout << "Skipping non existant input file \"" << infile << "\"" << endl;
+				cerr << "Skipping non existant input file \"" << infile << "\"" << endl;
 				continue;
 			}
 
 			if (!boost::filesystem::is_regular_file(path))
 			{
-				cout << "\"" << infile << "\" is not a valid file. Skipping" << endl;
+				cerr << "\"" << infile << "\" is not a valid file. Skipping" << endl;
 				continue;
 			}
 
@@ -340,6 +376,55 @@ bool CommandLineInterface::processInput()
 	}
 
 	return true;
+}
+
+void CommandLineInterface::handleCombinedJSON()
+{
+	if (!m_args.count("combined-json"))
+		return;
+
+	Json::Value output(Json::objectValue);
+
+	set<string> requests;
+	boost::split(requests, m_args["combined-json"].as<string>(), boost::is_any_of(","));
+	vector<string> contracts = m_compiler->getContractNames();
+
+	if (!contracts.empty())
+		output["contracts"] = Json::Value(Json::objectValue);
+	for (string const& contractName: contracts)
+	{
+		Json::Value contractData(Json::objectValue);
+		if (requests.count("sol-abi"))
+			contractData["sol-abi"] = m_compiler->getSolidityInterface(contractName);
+		if (requests.count("json-abi"))
+			contractData["json-abi"] = m_compiler->getInterface(contractName);
+		if (requests.count("binary"))
+			contractData["binary"] = toHex(m_compiler->getBytecode(contractName));
+		if (requests.count("opcodes"))
+			contractData["opcodes"] = eth::disassemble(m_compiler->getBytecode(contractName));
+		if (requests.count("asm"))
+		{
+			ostringstream unused;
+			contractData["asm"] = m_compiler->streamAssembly(unused, contractName, m_sourceCodes, true);
+		}
+		if (requests.count("natspec-dev"))
+			contractData["natspec-dev"] = m_compiler->getMetadata(contractName, DocumentationType::NatspecDev);
+		if (requests.count("natspec-user"))
+			contractData["natspec-user"] = m_compiler->getMetadata(contractName, DocumentationType::NatspecUser);
+		output["contracts"][contractName] = contractData;
+	}
+
+	if (requests.count("ast"))
+	{
+		output["sources"] = Json::Value(Json::objectValue);
+		for (auto const& sourceCode: m_sourceCodes)
+		{
+			ASTJsonConverter converter(m_compiler->getAST(sourceCode.first));
+			output["sources"][sourceCode.first] = Json::Value(Json::objectValue);
+			output["sources"][sourceCode.first]["AST"] = converter.json();
+		}
+	}
+	cout << Json::FastWriter().write(output) << endl;
 }
 
 void CommandLineInterface::handleAst(string const& _argStr)
@@ -400,6 +485,8 @@ void CommandLineInterface::handleAst(string const& _argStr)
 
 void CommandLineInterface::actOnInput()
 {
+	handleCombinedJSON();
+
 	// do we need AST output?
 	handleAst(g_argAstStr);
 	handleAst(g_argAstJson);
@@ -407,23 +494,23 @@ void CommandLineInterface::actOnInput()
 	vector<string> contracts = m_compiler->getContractNames();
 	for (string const& contract: contracts)
 	{
-		if (needStdout(m_args))
+		if (needsHumanTargetedStdout(m_args))
 			cout << endl << "======= " << contract << " =======" << endl;
 
 		// do we need EVM assembly?
-		if (m_args.count(g_argAsmStr))
+		if (m_args.count(g_argAsmStr) || m_args.count(g_argAsmJsonStr))
 		{
-			auto choice = m_args[g_argAsmStr].as<OutputType>();
+			auto choice = m_args.count(g_argAsmStr) ? m_args[g_argAsmStr].as<OutputType>() : m_args[g_argAsmJsonStr].as<OutputType>();
 			if (outputToStdout(choice))
 			{
 				cout << "EVM assembly:" << endl;
-				m_compiler->streamAssembly(cout, contract, m_sourceCodes);
+				m_compiler->streamAssembly(cout, contract, m_sourceCodes, m_args.count(g_argAsmJsonStr));
 			}
 
 			if (outputToFile(choice))
 			{
-				ofstream outFile(contract + ".evm");
-				m_compiler->streamAssembly(outFile, contract, m_sourceCodes);
+				ofstream outFile(contract + (m_args.count(g_argAsmJsonStr) ? "_evm.json" : ".evm"));
+				m_compiler->streamAssembly(outFile, contract, m_sourceCodes, m_args.count(g_argAsmJsonStr));
 				outFile.close();
 			}
 		}

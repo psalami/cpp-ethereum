@@ -135,8 +135,8 @@ CompiledContract::CompiledContract(const dev::solidity::CompilerStack& _compiler
 	CollectDeclarationsVisitor visitor(&m_functions, &m_locals);
 	m_storage = collectStorage(contractDefinition);
 	contractDefinition.accept(visitor);
-	m_assemblyItems = _compiler.getRuntimeAssemblyItems(name);
-	m_constructorAssemblyItems = _compiler.getAssemblyItems(name);
+	m_assemblyItems = *_compiler.getRuntimeAssemblyItems(name);
+	m_constructorAssemblyItems = *_compiler.getAssemblyItems(name);
 }
 
 QString CompiledContract::codeHex() const
@@ -249,7 +249,6 @@ void CodeModel::runCompilationJob(int _jobId)
 {
 	if (_jobId != m_backgroundJobId)
 		return; //obsolete job
-	ContractMap result;
 	solidity::CompilerStack cs(true);
 	try
 	{
@@ -260,54 +259,75 @@ void CodeModel::runCompilationJob(int _jobId)
 				cs.addSource(c.first.toStdString(), c.second.toStdString());
 		}
 		cs.compile(false);
-
-		{
-			Guard pl(x_pendingContracts);
-			Guard l(x_contractMap);
-			for (std::string n: cs.getContractNames())
-			{
-				if (c_predefinedContracts.count(n) != 0)
-					continue;
-				QString name = QString::fromStdString(n);
-				ContractDefinition const& contractDefinition = cs.getContractDefinition(n);
-				if (!contractDefinition.isFullyImplemented())
-					continue;
-				QString sourceName = QString::fromStdString(*contractDefinition.getLocation().sourceName);
-				auto sourceIter = m_pendingContracts.find(sourceName);
-				QString source = sourceIter != m_pendingContracts.end() ? sourceIter->second : QString();
-				CompiledContract* contract = new CompiledContract(cs, name, source);
-				QQmlEngine::setObjectOwnership(contract, QQmlEngine::CppOwnership);
-				result[name] = contract;
-				CompiledContract* prevContract = nullptr;
-				for (ContractMap::const_iterator c = m_contractMap.cbegin(); c != m_contractMap.cend(); ++c)
-					if (c.value()->documentId() == contract->documentId())
-						prevContract = c.value();
-				if (prevContract != nullptr && prevContract->contractInterface() != result[name]->contractInterface())
-					emit contractInterfaceChanged(name);
-				if (prevContract == nullptr)
-					emit newContractCompiled(name);
-				else if (prevContract->contract()->name() != name)
-					emit contractRenamed(contract->documentId(), prevContract->contract()->name(), name);
-			}
-			releaseContracts();
-			m_contractMap.swap(result);
-			emit codeChanged();
-			emit compilationComplete();
-		}
+		collectContracts(cs);
 	}
 	catch (dev::Exception const& _exception)
 	{
 		std::ostringstream error;
 		solidity::SourceReferenceFormatter::printExceptionInformation(error, _exception, "Error", cs);
-		SourceLocation const* location = boost::get_error_info<solidity::errinfo_sourceLocation>(_exception);
 		QString message = QString::fromStdString(error.str());
-		CompiledContract* contract = nullptr;
-		if (location && location->sourceName.get() && (contract = contractByDocumentId(QString::fromStdString(*location->sourceName))))
-			message = message.replace(QString::fromStdString(*location->sourceName), contract->contract()->name()); //substitute the location to match our contract names
-		compilationError(message, QString::fromStdString(*location->sourceName));
+		QString sourceName;
+		if (SourceLocation const* location = boost::get_error_info<solidity::errinfo_sourceLocation>(_exception))
+		{
+			if (location->sourceName)
+				sourceName = QString::fromStdString(*location->sourceName);
+			if (!sourceName.isEmpty())
+				if (CompiledContract* contract = contractByDocumentId(sourceName))
+					message = message.replace(sourceName, contract->contract()->name()); //substitute the location to match our contract names
+		}
+		compilationError(message, sourceName);
 	}
 	m_compiling = false;
 	emit stateChanged();
+}
+
+void CodeModel::collectContracts(dev::solidity::CompilerStack const& _cs)
+{
+	Guard pl(x_pendingContracts);
+	Guard l(x_contractMap);
+	ContractMap result;
+	for (std::string n: _cs.getContractNames())
+	{
+		if (c_predefinedContracts.count(n) != 0)
+			continue;
+		QString name = QString::fromStdString(n);
+		ContractDefinition const& contractDefinition = _cs.getContractDefinition(n);
+		if (!contractDefinition.isFullyImplemented())
+			continue;
+		QString sourceName = QString::fromStdString(*contractDefinition.getLocation().sourceName);
+		auto sourceIter = m_pendingContracts.find(sourceName);
+		QString source = sourceIter != m_pendingContracts.end() ? sourceIter->second : QString();
+		CompiledContract* contract = new CompiledContract(_cs, name, source);
+		QQmlEngine::setObjectOwnership(contract, QQmlEngine::CppOwnership);
+		result[name] = contract;
+		CompiledContract* prevContract = nullptr;
+		// find previous contract by name
+		for (ContractMap::const_iterator c = m_contractMap.cbegin(); c != m_contractMap.cend(); ++c)
+			if (c.value()->contract()->name() == contract->contract()->name())
+				prevContract = c.value();
+
+		// if not found, try by documentId
+		if (!prevContract)
+		{
+			for (ContractMap::const_iterator c = m_contractMap.cbegin(); c != m_contractMap.cend(); ++c)
+				if (c.value()->documentId() == contract->documentId())
+				{
+					//make sure there are no other contracts in the same source, otherwise it is not a rename
+					if (!std::any_of(result.begin(),result.end(), [=](ContractMap::const_iterator::value_type _v) { return _v != contract && _v->documentId() == contract->documentId(); }))
+					prevContract = c.value();
+				}
+		}
+		if (prevContract != nullptr && prevContract->contractInterface() != result[name]->contractInterface())
+			emit contractInterfaceChanged(name);
+		if (prevContract == nullptr)
+			emit newContractCompiled(name);
+		else if (prevContract->contract()->name() != name)
+			emit contractRenamed(contract->documentId(), prevContract->contract()->name(), name);
+	}
+	releaseContracts();
+	m_contractMap.swap(result);
+	emit codeChanged();
+	emit compilationComplete();
 }
 
 bool CodeModel::hasContract() const
@@ -392,8 +412,8 @@ SolidityType CodeModel::nodeType(dev::solidity::Type const* _type)
 			StructType const* s = dynamic_cast<StructType const*>(_type);
 			for(auto const& structMember: s->getMembers())
 			{
-				auto slotAndOffset = s->getStorageOffsetsOfMember(structMember.first);
-				r.members.push_back(SolidityDeclaration { QString::fromStdString(structMember.first), nodeType(structMember.second.get()), slotAndOffset.first, slotAndOffset.second });
+				auto slotAndOffset = s->getStorageOffsetsOfMember(structMember.name);
+				r.members.push_back(SolidityDeclaration { QString::fromStdString(structMember.name), nodeType(structMember.type.get()), slotAndOffset.first, slotAndOffset.second });
 			}
 		}
 		break;

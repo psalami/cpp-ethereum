@@ -97,8 +97,6 @@ struct ExecutionResult
 
 std::ostream& operator<<(std::ostream& _out, ExecutionResult const& _er);
 
-static const Address NullAddress;
-
 /// Encodes a transaction, ready to be exported to or freshly imported from RLP.
 class Transaction
 {
@@ -167,6 +165,12 @@ public:
 	/// @returns the receiving address of the message-call transaction (undefined for contract-creation transactions).
 	Address receiveAddress() const { return m_receiveAddress; }
 
+	/// Synonym for receiveAddress().
+	Address to() const { return m_receiveAddress; }
+
+	/// Synonym for safeSender().
+	Address from() const { return safeSender(); }
+
 	/// @returns the data associated with this (message-call) transaction. Synonym for initCode().
 	bytes const& data() const { return m_data; }
 	/// @returns the initialisation code associated with this (contract-creation) transaction. Synonym for data().
@@ -217,19 +221,14 @@ using Transactions = std::vector<Transaction>;
 /// Simple human-readable stream-shift operator.
 inline std::ostream& operator<<(std::ostream& _out, Transaction const& _t)
 {
-	_out << "{";
+	_out << _t.sha3().abridged() << "{";
 	if (_t.receiveAddress())
 		_out << _t.receiveAddress().abridged();
 	else
 		_out << "[CREATE]";
 
-	_out << "/" << _t.nonce() << "$" << _t.value() << "+" << _t.gas() << "@" << _t.gasPrice();
-	try
-	{
-		_out << "<-" << _t.sender().abridged();
-	}
-	catch (...) {}
-	_out << " #" << _t.data().size() << "}";
+	_out << "/" << _t.data().size() << "$" << _t.value() << "+" << _t.gas() << "@" << _t.gasPrice();
+	_out << "<-" << _t.safeSender().abridged() << " #" << _t.nonce() << "}";
 	return _out;
 }
 
